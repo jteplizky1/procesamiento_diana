@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="es">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Survey Studio V2</title><link rel="stylesheet" href="/static/styles.css"><link rel="stylesheet" href="/static/progress.css"></head>
+<body>
+<aside>
+  <div class="brand"><span>SS</span><div>Survey Studio<small>Research workspace · V2</small></div></div>
+  <div class="project-card"><label>Proyecto activo</label><select id="projectSelect"></select><button class="ghost" id="newProject">＋ Nuevo proyecto</button><button class="ghost" style="color:#ffb4b4;margin-left:12px" id="deleteProject">Eliminar proyecto</button></div>
+  <nav id="steps"></nav>
+  <div class="aside-foot"><span class="dot"></span> Guardado local persistente<br><small>Sin Streamlit · Sin PyArrow</small></div>
+</aside>
+<main>
+  <header><div><p class="eyebrow" id="stageLabel">PROYECTO</p><h1 id="title">Prepará tu investigación</h1><p id="subtitle">Un recorrido ordenado desde las respuestas crudas hasta una base lista para analizar.</p></div><div id="saveState" class="save-state">Todo guardado</div></header>
+  <section id="content"></section>
+  <footer><button id="back" class="secondary">← Anterior</button><div id="stageHint"></div><button id="next" class="primary">Siguiente →</button></footer>
+</main>
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+</body></html>

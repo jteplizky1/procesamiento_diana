@@ -1,0 +1,29 @@
+.job-progress {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid #b9e1e3;
+  background: #f0fbfb;
+  border-radius: 12px;
+}
+.job-progress .track {
+  height: 14px;
+  background: #dcebed;
+  border-radius: 20px;
+  overflow: hidden;
+  margin: 9px 0;
+}
+.job-progress .fill {
+  height: 100%;
+  background: linear-gradient(90deg, #087e8b, #35b5ba);
+  transition: width .45s ease;
+}
+.job-progress .job-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.job-progress strong { color: #0b6670; }
+#errorDialog { width:min(780px,90vw); max-height:85vh; border:1px solid #e1aaaa; border-radius:14px; padding:24px; color:#102a43; }
+#errorDialog::backdrop { background:rgba(16,42,67,.5); }
+#fullErrorText { white-space:pre-wrap; overflow-wrap:anywhere; overflow:auto; max-height:55vh; padding:16px; background:#fff0f0; }
+#errorDialog form { text-align:right; }
