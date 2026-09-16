@@ -18,10 +18,13 @@ También se puede usar `Iniciar Survey Studio V2.bat`. La aplicación abre `http
 
 Copiá `.env.example` como referencia y configurá los secretos en el sistema o plataforma; la aplicación no carga `.env` automáticamente.
 
-- `GEMINI_API_KEY`: clave backend de Gemini.
+- `GEMINI_API_KEY`: solamente para desarrollo local sin ADC; es opcional en Cloud Run.
+- `GOOGLE_CLOUD_LOCATION`: región de Vertex AI, por defecto `us-central1`.
 - `SUPABASE_URL`: URL del proyecto Supabase.
 - `SUPABASE_SERVICE_ROLE_KEY`: clave exclusiva del backend para sincronización.
 - `PORT` y `HOST`: para despliegue; Cloud Run usa `PORT=8080` y `HOST=0.0.0.0`.
+
+En Cloud Run, Gemini se invoca mediante Vertex AI y Application Default Credentials usando la identidad asociada al servicio. No se configura una clave JSON ni `GEMINI_API_KEY` en producción. El contenedor escucha en `0.0.0.0:$PORT`.
 
 Ejecutá `supabase/migrations/001_survey_storage.sql` en Supabase antes de usar **Sincronizar con Supabase**. Después configurá Supabase Pipelines con la publicación `survey_bigquery_publication` y BigQuery como destino.
 

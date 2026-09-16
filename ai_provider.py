@@ -26,11 +26,31 @@ def _error_detail(error: urllib.error.HTTPError, secret: str) -> str:
     return detail.replace(secret, "[clave oculta]") if secret else detail
 
 
+def _vertex_payload(config: dict, model: str, body: dict) -> tuple[dict, str]:
+    """Llama Vertex AI con ADC; en Cloud Run usa automáticamente la service identity."""
+    try:
+        import google.auth
+        from google.auth.transport.requests import AuthorizedSession
+    except ImportError as error:
+        raise ValueError("Falta google-auth[requests] para usar Gemini mediante Vertex AI.") from error
+    credentials, detected_project = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    project_id = (config.get("project_id") or os.getenv("GOOGLE_CLOUD_PROJECT") or
+                  os.getenv("GCLOUD_PROJECT") or detected_project)
+    if not project_id:
+        raise ValueError("Vertex AI no pudo determinar el proyecto de Google Cloud mediante ADC.")
+    location = config.get("location") or os.getenv("GOOGLE_CLOUD_LOCATION") or "us-central1"
+    url = (f"https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}/locations/{location}"
+           f"/publishers/google/models/{urllib.parse.quote(model, safe='')}:generateContent")
+    response = AuthorizedSession(credentials).post(url, json=body, timeout=int(config.get("timeout_seconds", 300)))
+    if response.status_code >= 400:
+        raise ValueError(f"Vertex AI respondió con HTTP {response.status_code}: {response.text}")
+    return response.json(), "vertex-ai"
+
+
 def gemini_request(project: dict, messages: list[dict], schema: dict, notify=lambda **kw: None) -> dict:
     config = _config(project)
     key = _api_key(config)
-    if not key:
-        raise ValueError("Falta GEMINI_API_KEY. Configurala como variable de entorno del servidor.")
+    provider = (config.get("provider") or "auto").strip().lower()
     model = (config.get("model") or DEFAULT_GEMINI_MODEL).strip()
     system = "\n\n".join(str(m.get("content", "")) for m in messages if m.get("role") == "system").strip()
     contents = []
@@ -45,25 +65,31 @@ def gemini_request(project: dict, messages: list[dict], schema: dict, notify=lam
     body = {"contents": contents, "generationConfig": generation}
     if system:
         body["systemInstruction"] = {"parts": [{"text": system}]}
-    url = (config.get("base_url") or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
-    url += f"/models/{urllib.parse.quote(model, safe='')}:generateContent"
-    request = urllib.request.Request(url, data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-                                     headers={"Content-Type": "application/json", "x-goog-api-key": key})
     started = time.monotonic()
     notify(generated_chars=0, waiting_since=time.time(), last_activity=None, prompt_messages=messages,
            prompt_schema=schema, model=model, options=generation)
-    try:
-        with urllib.request.urlopen(request, timeout=int(config.get("timeout_seconds", 300))) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        detail = _error_detail(error, key)
-        if error.code in (401, 403):
-            raise ValueError(f"Gemini rechazó la autenticación ({error.code}). Revisá GEMINI_API_KEY.\n{detail}") from error
-        if error.code == 429:
-            raise ValueError(f"Gemini alcanzó el límite temporal de solicitudes (429). El lote puede reintentarse.\n{detail}") from error
-        raise ValueError(f"Gemini respondió con error HTTP {error.code}.\n{detail}") from error
-    except (urllib.error.URLError, TimeoutError) as error:
-        raise ValueError(f"No se pudo completar la llamada a Gemini: {getattr(error, 'reason', error)}") from error
+    selected_provider = "gemini-api"
+    if provider == "vertex" or (provider == "auto" and (os.getenv("K_SERVICE") or not key)):
+        payload, selected_provider = _vertex_payload(config, model, body)
+    else:
+        if not key:
+            raise ValueError("Falta GEMINI_API_KEY para uso local o configurá credenciales ADC de Google Cloud.")
+        url = (config.get("base_url") or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+        url += f"/models/{urllib.parse.quote(model, safe='')}:generateContent"
+        request = urllib.request.Request(url, data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+                                         headers={"Content-Type": "application/json", "x-goog-api-key": key})
+        try:
+            with urllib.request.urlopen(request, timeout=int(config.get("timeout_seconds", 300))) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            detail = _error_detail(error, key)
+            if error.code in (401, 403):
+                raise ValueError(f"Gemini rechazó la autenticación ({error.code}). Revisá GEMINI_API_KEY.\n{detail}") from error
+            if error.code == 429:
+                raise ValueError(f"Gemini alcanzó el límite temporal de solicitudes (429). El lote puede reintentarse.\n{detail}") from error
+            raise ValueError(f"Gemini respondió con error HTTP {error.code}.\n{detail}") from error
+        except (urllib.error.URLError, TimeoutError) as error:
+            raise ValueError(f"No se pudo completar la llamada a Gemini: {getattr(error, 'reason', error)}") from error
     candidates = payload.get("candidates") or []
     if not candidates:
         raise ValueError(f"Gemini no devolvió candidatos válidos: {json.dumps(payload, ensure_ascii=False)[:1000]}")
@@ -86,4 +112,5 @@ def test_gemini(config: dict) -> dict:
     result = gemini_request(project, [{"role": "user", "content": "Respondé con ok=true."}],
                              {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]})
     return {"ok": bool(result.get("ok")), "latency_ms": round((time.perf_counter() - started) * 1000),
-            "model": (config.get("model") or DEFAULT_GEMINI_MODEL)}
+            "model": (config.get("model") or DEFAULT_GEMINI_MODEL),
+            "provider": config.get("provider") or "auto"}

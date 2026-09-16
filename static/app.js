@@ -161,7 +161,7 @@ async function openExternalReview(){
   }catch(e){toast(e.message,true)}
 }
 
-function aiForm(){return{provider:'gemini',model:$('#geminiModel').value.trim(),max_output_tokens:+$('#geminiMaxTokens').value||8192}}
+function aiForm(){return{provider:'auto',model:$('#geminiModel').value.trim(),max_output_tokens:+$('#geminiMaxTokens').value||8192}}
 function selectedTextSettings(){
   const questions=[],settings={};
   document.querySelectorAll('[data-tselect]').forEach(x=>{
@@ -192,7 +192,7 @@ async function saveTextSelection(){
 async function testGeminiConnection(){
   const button=$('#testGemini');button.disabled=true;button.textContent='Probando…';
   try{const r=await api('/api/project/'+S.project.id+'/test-ai',{method:'POST',body:JSON.stringify(aiForm())});
-    $('#connectionResult').innerHTML='<div class="alert success">Conexión correcta con Gemini · '+r.latency_ms+' ms<br>Modelo: '+esc(r.model)+'</div>';
+    $('#connectionResult').innerHTML='<div class="alert success">Conexión correcta con Gemini · '+r.latency_ms+' ms<br>Modelo: '+esc(r.model)+' · autenticación: '+esc(r.provider)+'</div>';
   }catch(e){$('#connectionResult').innerHTML='<div class="alert">'+esc(e.message)+'</div>';toast(e.message,true)}
   finally{button.disabled=false;button.textContent='Probar conexión'}
 }
