@@ -16,7 +16,7 @@ DEFAULT_BUCKET = "wildfi-sandbox-diana-analysis"
 
 
 def bucket_name() -> str:
-    value = (os.getenv("GCS_PROJECTS_BUCKET") or DEFAULT_BUCKET).strip()
+    value = (os.getenv("GCS_BUCKET") or os.getenv("GCS_PROJECTS_BUCKET") or DEFAULT_BUCKET).strip()
     return value.removeprefix("gs://").strip("/")
 
 

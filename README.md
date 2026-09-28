@@ -19,7 +19,7 @@ También se puede usar `Iniciar Survey Studio V2.bat`. La aplicación abre `http
 Copiá `.env.example` como referencia y configurá los secretos en el sistema o plataforma; la aplicación no carga `.env` automáticamente.
 
 - `GEMINI_API_KEY`: solamente para desarrollo local sin ADC; es opcional en Cloud Run.
-- `GCS_PROJECTS_BUCKET`: bucket donde se guardan y recuperan proyectos; por defecto `wildfi-sandbox-diana-analysis`.
+- `GCS_BUCKET` o `GCS_PROJECTS_BUCKET`: bucket donde se guardan y recuperan proyectos; por defecto `wildfi-sandbox-diana-analysis`.
 - `GOOGLE_CLOUD_PROJECT`: proyecto de Google Cloud para Vertex AI; en el sandbox es `566529420133`.
 - `GOOGLE_CLOUD_LOCATION`: región de Vertex AI, por defecto `us-central1`.
 - `SUPABASE_URL`: URL del proyecto Supabase.
