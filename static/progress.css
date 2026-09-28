@@ -27,3 +27,5 @@
 #errorDialog::backdrop { background:rgba(16,42,67,.5); }
 #fullErrorText { white-space:pre-wrap; overflow-wrap:anywhere; overflow:auto; max-height:55vh; padding:16px; background:#fff0f0; }
 #errorDialog form { text-align:right; }
+.step.locked { opacity:.48; cursor:not-allowed; }
+.step.locked:hover { background:transparent; color:#bcccdc; }

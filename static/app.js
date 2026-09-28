@@ -38,7 +38,32 @@ $('#saveCloudProject').onclick=async()=>{if(!S.project)return;const b=$('#saveCl
 $('#openCloudProject').onclick=async()=>{const b=$('#openCloudProject');b.disabled=true;b.textContent='☁ Buscando…';try{const rows=await api('/api/cloud-projects');document.body.insertAdjacentHTML('beforeend',`<div class="modal"><div class="card"><h2>Abrir proyecto del sandbox</h2><p>Al abrirlo se descarga una copia local para continuar trabajando.</p><div class="field"><label>Proyecto guardado</label><select id="cloudProjectSelect">${rows.map((p,i)=>`<option value="${i}">${esc(p.name)} · ${esc(p.updated_at||'sin fecha')}</option>`).join('')}</select></div><div class="actions"><button class="secondary" onclick="this.closest('.modal').remove()">Cancelar</button><button class="primary" id="restoreCloud" ${rows.length?'':'disabled'}>Abrir proyecto</button></div>${rows.length?'':'<div class="alert">No hay proyectos guardados en el sandbox.</div>'}</div></div>`);if(rows.length)$('#restoreCloud').onclick=async()=>{const selected=rows[+$('#cloudProjectSelect').value];const p=await api('/api/cloud-projects/restore',{method:'POST',body:JSON.stringify({prefix:selected.prefix})});document.querySelector('.modal').remove();S.projects=await api('/api/projects');await openProject(p.id);toast('Proyecto recuperado del sandbox')}}catch(e){toast(e.message,true)}finally{b.disabled=false;b.textContent='☁ Abrir del sandbox'}};
 $('#deleteProject').onclick=async()=>{if(!S.project)return;const id=S.project.id,name=S.project.name||'Sin nombre';if(!confirm(`¿Eliminar definitivamente el proyecto “${name}”?\n\nSe borrarán su configuración, clasificaciones y la copia local de las respuestas. Esta acción no afecta Google Sheets y no se puede deshacer.`))return;try{await api('/api/project/'+id,{method:'DELETE'});S.projects=await api('/api/projects');S.project=null;S.source=null;S.workflow=null;S.quotaOptions=null;S.quotaDraft=[];S.sheetTabs=null;if(S.projects.length)await openProject(S.projects[0].id);else{renderProjectSelect();render()}toast(`Proyecto “${name}” eliminado definitivamente.`)}catch(e){toast(e.message,true)}};
 function completeness(){let p=S.project||{},sample=!!(p.sample_response_ids||[]).length;return [!!p.id,!!S.source,!!(p.quota_rows||[]).length,sample,sample&&!!S.workflow?.text?.complete,sample&&!!S.workflow?.rankings_complete,sample,sample]}
-function shell(){let p=S.project||{},st=stages[S.step],done=completeness();$('#stageLabel').textContent=`PASO ${S.step+1} DE ${stages.length} · ${st.name.toUpperCase()}`;$('#title').textContent=st.title;$('#subtitle').textContent=st.desc;$('#steps').innerHTML=stages.map((x,i)=>`<div class="step ${i===S.step?'active':''} ${done[i]?'done':''}" data-step="${i}"><span class="n">${done[i]?'✓':i+1}</span><div><b>${x.name}</b><small>${x.sub}</small></div></div>`).join('');document.querySelectorAll('.step').forEach(x=>x.onclick=()=>{S.step=+x.dataset.step;render()});$('#back').disabled=S.step===0;$('#next').disabled=S.step===stages.length-1;$('#back').onclick=()=>{S.step--;render()};$('#next').onclick=()=>{S.step++;render()};$('#stageHint').innerHTML=S.quotaDirty?'Hay cuotas editadas sin guardar':done[3]?`<a href="/api/project/${p.id}/export"><button class="secondary">Descargar base procesada</button></a>`:''}
+const stageRequirements=[
+ 'Creá un proyecto nuevo o seleccioná uno existente.',
+ 'Conectá una hoja de respuestas y cargá la solapa que querés analizar.',
+ 'Completá la distribución y tocá “Guardar cuotas”.',
+ 'Sorteá y guardá la muestra balanceada.',
+ 'Procesá o revisá todas las preguntas de texto libre seleccionadas.',
+ 'Procesá las preguntas de ranking seleccionadas.',
+ 'Completá primero la muestra balanceada.',
+ 'Completá primero la muestra balanceada.',
+];
+function effectiveCompleteness(){let done=completeness();if(S.quotaDirty)done[2]=false;return done}
+function firstPendingStep(done){let pending=done.findIndex(value=>!value);return pending<0?stages.length-1:pending}
+function shell(){
+ let p=S.project||{},done=effectiveCompleteness(),maxStep=firstPendingStep(done);
+ if(S.step>maxStep)S.step=maxStep;
+ let st=stages[S.step];
+ $('#stageLabel').textContent=`PASO ${S.step+1} DE ${stages.length} · ${st.name.toUpperCase()}`;
+ $('#title').textContent=st.title;$('#subtitle').textContent=st.desc;
+ $('#steps').innerHTML=stages.map((x,i)=>{let locked=i>maxStep;return `<div class="step ${i===S.step?'active':''} ${done[i]?'done':''} ${locked?'locked':''}" data-step="${i}" aria-disabled="${locked}" title="${locked?esc(stageRequirements[maxStep]):''}"><span class="n">${done[i]?'✓':locked?'🔒':i+1}</span><div><b>${x.name}</b><small>${locked?'Bloqueado · completá el paso anterior':x.sub}</small></div></div>`}).join('');
+ document.querySelectorAll('.step').forEach(x=>x.onclick=()=>{let target=+x.dataset.step;if(target>maxStep){toast(stageRequirements[maxStep],true);return}S.step=target;render()});
+ $('#back').disabled=S.step===0;
+ $('#next').disabled=S.step===stages.length-1||!done[S.step];
+ $('#back').onclick=()=>{S.step--;render()};
+ $('#next').onclick=()=>{if(!done[S.step]){toast(stageRequirements[S.step],true);return}S.step++;render()};
+ $('#stageHint').innerHTML=!done[S.step]?`<span class="muted">Para continuar: ${esc(stageRequirements[S.step])}</span>`:done[3]?`<a href="/api/project/${p.id}/export"><button class="secondary">Descargar base procesada</button></a>`:'';
+}
 async function refreshWorkflow(){if(!S.project?.source_url)return;S.workflow=await api('/api/project/'+S.project.id+'/workflow-status')}
 function render(){shell();if(!S.project){$('#content').innerHTML='<div class="card"><h2>Empecemos</h2><p>Creá tu primer proyecto para comenzar.</p></div>';return}([projectView,sourceView,quotasView,balanceView,textView,rankingView,analysisView,exportView][S.step])()}
 async function saveFields(data){markSaving(true);S.project=await api(`/api/project/${S.project.id}/save`,{method:'POST',body:JSON.stringify(data)});markSaving(false);S.projects=await api('/api/projects');renderProjectSelect();toast('Proyecto guardado')}
