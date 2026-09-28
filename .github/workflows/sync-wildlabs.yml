@@ -1,0 +1,59 @@
+name: Replicar en Wild-Labs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: sync-wildlabs-main
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validar credencial de sincronización
+        env:
+          SYNC_TOKEN: ${{ secrets.WILDLABS_SYNC_TOKEN }}
+        run: |
+          if [ -z "$SYNC_TOKEN" ]; then
+            echo "Falta configurar el secreto WILDLABS_SYNC_TOKEN en el repositorio canónico."
+            exit 1
+          fi
+
+      - name: Descargar repositorio de destino
+        uses: actions/checkout@v4
+        with:
+          repository: Wild-Labs/wildfi-sb-diana-analysis
+          token: ${{ secrets.WILDLABS_SYNC_TOKEN }}
+          fetch-depth: 0
+
+      - name: Integrar main canónico sin perder cambios de Wild-Labs
+        env:
+          GH_TOKEN: ${{ secrets.WILDLABS_SYNC_TOKEN }}
+        run: |
+          git config user.name "procesamiento-diana-sync"
+          git config user.email "procesamiento-diana-sync@users.noreply.github.com"
+          git remote add canonical https://github.com/jteplizky1/procesamiento_diana.git
+          git fetch canonical main
+          git switch -C sync/procesamiento-diana origin/main
+          # Conserva la documentación/configuración propia del sandbox si hay
+          # un conflicto, e integra automáticamente el resto del producto.
+          git merge -X ours --no-edit canonical/main
+          git push --force-with-lease origin sync/procesamiento-diana
+
+          existing="$(gh pr list --repo Wild-Labs/wildfi-sb-diana-analysis --head sync/procesamiento-diana --base main --json number --jq '.[0].number // empty')"
+          if [ -z "$existing" ]; then
+            gh pr create \
+              --repo Wild-Labs/wildfi-sb-diana-analysis \
+              --head sync/procesamiento-diana \
+              --base main \
+              --title "Sincronizar procesamiento_diana" \
+              --body "Sincronización automática desde jteplizky1/procesamiento_diana:main. Conserva los cambios propios de Wild-Labs."
+          fi
+
+          gh pr merge \
+            --repo Wild-Labs/wildfi-sb-diana-analysis \
+            --auto --merge \
+            "${existing:-sync/procesamiento-diana}" || true
