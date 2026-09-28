@@ -1326,7 +1326,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(); parser.add_argument("--port", type=int, default=int(os.getenv("PORT", "8765"))); parser.add_argument("--host", default=os.getenv("HOST", "127.0.0.1")); parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args(); server = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}"
-    print(f"Survey Studio V2 disponible en {url}")
+    print(f"D1ana Wizard Tool disponible en {url}")
     if not args.no_browser and args.host in {"127.0.0.1", "localhost"}: threading.Timer(1, lambda: webbrowser.open(url)).start()
     try: server.serve_forever()
     except KeyboardInterrupt: pass

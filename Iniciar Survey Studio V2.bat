@@ -1,9 +1,9 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title Survey Studio V2
+title D1ana Wizard Tool
 echo.
-echo  Survey Studio V2 - sin Streamlit ni PyArrow
+echo  D1ana Wizard Tool - sin Streamlit ni PyArrow
 echo.
 set "APP_PYTHON=%~dp0..\survey_explorer\.venv\Scripts\python.exe"
 if not exist "%APP_PYTHON%" set "APP_PYTHON=%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"

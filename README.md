@@ -1,5 +1,7 @@
 # Procesamiento Diana
 
+La interfaz de la aplicación se presenta como **D1ana Wizard Tool**.
+
 Aplicación web para preparar, balancear, ponderar y analizar encuestas. Procesa respuestas abiertas con Gemini, exporta bases originales/limpias/ponderadas y puede sincronizar resultados con Supabase para replicarlos a BigQuery.
 
 Repositorio canónico: `jteplizky1/procesamiento_diana`. Las copias en otras cuentas u organizaciones no transfieren la titularidad ni reemplazan este origen.
