@@ -17,7 +17,8 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
     throw "No se encontró GitHub CLI. Instalalo con: winget install --id GitHub.cli"
 }
 
-$activeUser = (& gh api user --jq .login).Trim()
+$activeUserOutput = & gh api user --jq .login
+$activeUser = ([string]($activeUserOutput -join "")).Trim()
 if ($LASTEXITCODE -ne 0 -or $activeUser -ne "jtwildfi") {
     throw "La cuenta activa debe ser jtwildfi. Ejecutá: gh auth switch --hostname github.com --user jtwildfi"
 }
@@ -56,7 +57,8 @@ try {
 
 Invoke-Git push -u wildlabs $integrationBranch
 
-$existingPr = (& gh pr list --repo $targetRepo --head $integrationBranch --base main --state open --json url --jq '.[0].url // empty').Trim()
+$existingPrOutput = & gh pr list --repo $targetRepo --head $integrationBranch --base main --state open --json url --jq '.[0].url // empty'
+$existingPr = ([string]($existingPrOutput -join "")).Trim()
 if ($LASTEXITCODE -ne 0) {
     throw "No se pudo consultar si ya existe un pull request."
 }
@@ -64,12 +66,13 @@ if ($LASTEXITCODE -ne 0) {
 if ($existingPr) {
     Write-Host "Pull request actualizado: $existingPr" -ForegroundColor Green
 } else {
-    $prUrl = (& gh pr create `
+    $prUrlOutput = & gh pr create `
         --repo $targetRepo `
         --base main `
         --head $integrationBranch `
         --title "Sincronizar D1ana Wizard Tool" `
-        --body "Sincronización manual desde jteplizky1/procesamiento_diana:main.").Trim()
+        --body "Sincronización manual desde jteplizky1/procesamiento_diana:main."
+    $prUrl = ([string]($prUrlOutput -join "")).Trim()
     if ($LASTEXITCODE -ne 0) {
         throw "La rama se publicó, pero no se pudo crear el pull request."
     }
