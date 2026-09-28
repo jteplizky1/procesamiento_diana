@@ -4,8 +4,6 @@ Aplicación web para preparar, balancear, ponderar y analizar encuestas. Procesa
 
 Repositorio canónico: `jteplizky1/procesamiento_diana`. Las copias en otras cuentas u organizaciones no transfieren la titularidad ni reemplazan este origen.
 
-Los pushes a `main` se integran en `Wild-Labs/wildfi-sb-diana-analysis` mediante `.github/workflows/sync-wildlabs.yml`. El repositorio canónico debe tener configurado el secreto `WILDLABS_SYNC_TOKEN` con permiso para crear ramas y pull requests en el repositorio de destino.
-
 ## Inicio local
 
 ```powershell
