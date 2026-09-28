@@ -30,6 +30,7 @@ from brand_quality import review_doubtful
 import external_review
 import cross_analysis
 import storage_sync
+import gcs_projects
 from ai_provider import gemini_request, test_gemini
 from text_resilience import run_with_retries, StopRequested, http_status, RETRY_ATTEMPT, OutputLimitError, ModelInterruptedError
 
@@ -1104,6 +1105,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/text-jobs":
                 return self.send_json([dict(j) for j in TEXT_JOBS.values()])
             if path == "/api/projects": return self.send_json(list_projects())
+            if path == "/api/cloud-projects": return self.send_json(gcs_projects.list_cloud_projects())
             if path.startswith("/api/project/"):
                 parts = path.split("/"); pid = parts[3]; project = read_project(pid)
                 if len(parts) == 4: return self.send_json(project)
@@ -1201,6 +1203,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/projects":
                 project = {"id": uuid.uuid4().hex, "version": 2, "name": data.get("name", "Nuevo proyecto").strip(), "description": data.get("description", ""), "source_url": "", "quota_settings": {}, "quota_rows": [], "sample_response_ids": [], "dictionary": [], "text_classifications": {}, "text_codebooks": {}, "created_at": datetime.now().isoformat(timespec="seconds")}
                 save_project(project); return self.send_json(project, 201)
+            if path == "/api/cloud-projects/restore":
+                project = gcs_projects.restore(data.get("prefix", ""), PROJECTS_DIR, SNAPSHOTS_DIR)
+                DATA_CACHE.pop(project["id"], None)
+                return self.send_json(project)
             parts = path.split("/"); pid = parts[3]; action = parts[4]; project = read_project(pid)
             if action == "save":
                 sheet_changed = (
@@ -1235,6 +1241,13 @@ class Handler(BaseHTTPRequestHandler):
                         if job["project_id"] == pid and job["status"] == "running":
                             job["stop_requested"] = True
                 return self.send_json({"message": "Se detendrá después de la llamada actual."})
+            if action == "save-cloud":
+                workbook = None
+                if project.get("sample_response_ids"):
+                    workbook = export_workbook(project, load_source(project))
+                return self.send_json(gcs_projects.save_bundle(
+                    project, project_path(pid), SNAPSHOTS_DIR / f"{pid}.jsonl", workbook
+                ))
             frame = load_source(project, refresh=action == "refresh-source")
             if action == "sync-storage":
                 raw_rows, processed_rows, result_rows = storage_rows(project, frame)

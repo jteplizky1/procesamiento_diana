@@ -19,12 +19,22 @@ También se puede usar `Iniciar Survey Studio V2.bat`. La aplicación abre `http
 Copiá `.env.example` como referencia y configurá los secretos en el sistema o plataforma; la aplicación no carga `.env` automáticamente.
 
 - `GEMINI_API_KEY`: solamente para desarrollo local sin ADC; es opcional en Cloud Run.
+- `GCS_PROJECTS_BUCKET`: bucket donde se guardan y recuperan proyectos; por defecto `wildfi-sandbox-diana-analysis`.
+- `GOOGLE_CLOUD_PROJECT`: proyecto de Google Cloud para Vertex AI; en el sandbox es `566529420133`.
 - `GOOGLE_CLOUD_LOCATION`: región de Vertex AI, por defecto `us-central1`.
 - `SUPABASE_URL`: URL del proyecto Supabase.
 - `SUPABASE_SERVICE_ROLE_KEY`: clave exclusiva del backend para sincronización.
 - `PORT` y `HOST`: para despliegue; Cloud Run usa `PORT=8080` y `HOST=0.0.0.0`.
 
 En Cloud Run, Gemini se invoca mediante Vertex AI y Application Default Credentials usando la identidad asociada al servicio. No se configura una clave JSON ni `GEMINI_API_KEY` en producción. El contenedor escucha en `0.0.0.0:$PORT`.
+
+La misma identidad se usa para Cloud Storage. Debe tener permisos para listar, crear, leer y actualizar objetos en `gs://wildfi-sandbox-diana-analysis` (por ejemplo, `roles/storage.objectUser` sobre ese bucket). En una PC local, iniciá ADC una vez con:
+
+```powershell
+gcloud auth application-default login
+```
+
+El botón **Guardar en sandbox** crea `projects/<nombre>--<id>/` con `project.json`, la copia `source.jsonl` y, cuando corresponde, `processed-results.xlsx`. **Abrir del sandbox** restaura esos archivos localmente para continuar o retrabajar el proyecto. La descarga directa a la PC sigue disponible en Exportación.
 
 Ejecutá `supabase/migrations/001_survey_storage.sql` en Supabase antes de usar **Sincronizar con Supabase**. Después configurá Supabase Pipelines con la publicación `survey_bigquery_publication` y BigQuery como destino.
 
