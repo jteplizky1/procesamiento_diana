@@ -29,3 +29,10 @@
 #errorDialog form { text-align:right; }
 .step.locked { opacity:.48; cursor:not-allowed; }
 .step.locked:hover { background:transparent; color:#bcccdc; }
+#next.blocked-next { opacity:.55; cursor:not-allowed; position:relative; }
+#next.blocked-next:hover::before {
+  content:attr(data-tooltip); position:absolute; right:0; bottom:calc(100% + 10px);
+  width:max-content; max-width:360px; padding:9px 12px; border-radius:8px;
+  background:#102a43; color:white; font-size:12px; font-weight:500; text-align:left;
+  box-shadow:0 8px 24px rgba(16,42,67,.22); z-index:20;
+}
