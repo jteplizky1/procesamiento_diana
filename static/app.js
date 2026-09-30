@@ -125,35 +125,25 @@ function textViewEnhanced(){
   $('#content').innerHTML=`<div class="card"><h2>Preguntas a procesar</h2>
     <p>Marcá las preguntas. La cola completa todos los lotes de una pregunta antes de pasar a la siguiente, en el orden de esta tabla.</p>
     <p class="muted">Instrucciones: escribí tu criterio en lenguaje natural. El sistema lo integra al prompt y agrega el formato JSON. Las correcciones de marcas guardadas sirven de referencia para próximos lotes de este proyecto.</p>
-    <div class="table-wrap"><table><thead><tr><th>Incluir</th><th>Pregunta</th><th>Interpretación</th><th>Categorías (vacío = libre)</th><th>Instrucciones para Gemini</th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th><label><input type="checkbox" id="selectAllText"> Todas</label></th><th>Pregunta</th><th>Interpretación</th><th>Categorías (vacío = libre)</th><th>Instrucciones para Gemini</th></tr></thead><tbody>
     ${all.map((q,i)=>{const cfg=S.project.text_question_settings?.[q]||{mode:S.project.text_processing_modes?.[q]||'semantic',category_count:S.project.text_category_counts?.[q]};
       return `<tr><td><input type="checkbox" data-tselect="${i}" ${chosen.includes(q)?'checked':''}></td><td>${i+1}. ${esc(q)}</td>
       <td><select data-tmode="${i}"><option value="semantic" ${cfg.mode==='semantic'?'selected':''}>Categorías temáticas</option><option value="brands" ${cfg.mode==='brands'?'selected':''}>Normalizar marcas</option></select></td>
-      <td><input type="number" min="2" data-tcount="${i}" value="${esc(cfg.category_count||'')}" placeholder="Libre"></td><td><textarea data-tprompt="${i}" placeholder="Ej.: Devolver solo marcas de autos, nunca modelos.">${esc(cfg.instructions||'')}</textarea></td></tr>`}).join('')}</tbody></table></div>
-    <div class="actions"><button id="saveTextSelection" class="secondary">Guardar selección</button></div></div>
+      <td><input type="number" min="2" data-tcount="${i}" value="${esc(cfg.category_count||'')}" placeholder="Libre"></td><td><textarea data-tprompt="${i}" placeholder="Ej.: Devolver solo marcas de autos, nunca modelos.">${esc(cfg.instructions||'')}</textarea></td></tr>`}).join('')}</tbody></table></div></div>
     <div class="card"><h2>Procesamiento y resultados</h2><div class="field"><label>Pregunta para ver resultados o procesar un lote</label><select id="textQ"></select></div>
     <div class="grid three"><div class="field"><label>Tamaño del lote</label><input id="batch" type="number" value="10" min="1" max="100"></div>
     <div class="field"><label>Modelo Gemini</label><input id="geminiModel" value="${esc(S.project.ai?.model||'gemini-2.5-flash')}"></div>
     <div class="field"><label>Máximo de tokens de salida</label><input id="geminiMaxTokens" type="number" min="1024" max="65536" value="${esc(S.project.ai?.max_output_tokens||8192)}"></div></div>
     <p class="muted">Un solo clic procesa todos los pendientes en lotes automáticos, sin pedir confirmación entre lotes. Podés revisar y guardar correcciones mientras continúa. Mantené el servidor encendido.</p>
-    <div class="actions"><button id="processText" class="secondary">Procesar todos los pendientes de esta pregunta</button><button id="processAllText" class="primary">Iniciar procesamiento automático de las seleccionadas</button>
-    <button id="stopText" class="secondary" disabled>Detener al terminar la llamada</button><button id="loadReview" class="secondary">Actualizar resultados</button>
-    <button id="testGemini" class="secondary">Probar conexión con Gemini</button><button id="previewPrompt" class="secondary">Ver próximo prompt</button></div>
+    <div class="actions"><button id="processText" class="primary">Procesar pregunta seleccionada</button><button id="processAllText" class="primary">Procesar todas las preguntas</button><button id="openManual" class="secondary">Ingresar manualmente las equivalencias</button></div>
     <div id="connectionResult"></div><div id="jobProgress" aria-live="polite"></div><div id="batchHistory"></div>
-    <details id="promptPanel"><summary>Prompt exacto y parámetros enviados a Gemini</summary><p id="promptNote" class="muted"></p><pre id="promptContent" style="white-space:pre-wrap;max-height:360px;overflow:auto"></pre></details>
-    <div class="actions"><button id="openExternal" class="primary">Planilla por ID · copiar / pegar revisión externa</button></div>
-    <div id="externalReview"></div><div id="review"></div></div>`;
+    <div id="manualWorkspace" hidden><div id="externalReview"></div><div id="review"></div></div></div>`;
   document.querySelectorAll('[data-tselect]').forEach(x=>x.onchange=syncTextSelection);
-  $('#textQ').onchange=loadReview;
-  $('#saveTextSelection').onclick=()=>saveTextSelection().then(()=>toast('Selección guardada')).catch(e=>toast(e.message,true));
+  $('#selectAllText').onchange=e=>{document.querySelectorAll('[data-tselect]').forEach(x=>x.checked=e.target.checked);syncTextSelection()};
+  $('#textQ').onchange=async()=>{if(!$('#manualWorkspace').hidden){await openExternalReview();await loadReview()}};
   $('#processText').onclick=()=>startTextProcessing(false);
   $('#processAllText').onclick=()=>startTextProcessing(true);
-  $('#stopText').onclick=async()=>{try{await api('/api/project/'+S.project.id+'/stop-text',{method:'POST',body:'{}'});toast('Se detendrá al finalizar la llamada actual.')}catch(e){toast(e.message,true)}};
-  $('#testGemini').onclick=testGeminiConnection;
-  $('#loadReview').textContent='Ir a inspección manual / actualizar';
-  $('#loadReview').onclick=async()=>{await loadReview();$('#review')?.scrollIntoView({behavior:'smooth',block:'start'})};
-  $('#previewPrompt').onclick=previewTextPrompt;
-  $('#openExternal').onclick=openExternalReview;
+  $('#openManual').onclick=async()=>{try{await saveTextSelection();$('#manualWorkspace').hidden=false;await openExternalReview();await loadReview();$('#manualWorkspace').scrollIntoView({behavior:'smooth',block:'start'})}catch(e){toast(e.message,true)}};
   syncTextSelection();
   resumeTextJob();
 }
@@ -165,17 +155,15 @@ async function openExternalReview(){
   try{
     const result=await api('/api/project/'+pid+'/external-review?question='+encodeURIComponent(q));
     if(S.project.id!==pid||!$('#externalReview'))return;
-    $('#externalReview').innerHTML='<div class="card"><h2>Planilla por ID: '+esc(q)+'</h2><p>'+result.rows.length+' encuestados de la muestra balanceada. Esta vista incluye originales sin procesar y prioriza las correcciones por ID. La revisión agrupada de abajo no muestra estas excepciones individuales.</p><p>Copiá la tabla a Excel o a tu asistente. Conservá los IDs como texto. No envíes datos personales a servicios externos sin autorización.</p>'+
-      '<div class="actions"><button id="copyExternalTable" class="primary">Copiar toda la tabla</button><button id="copyExternalPrompt" class="secondary">Copiar prompt exacto</button></div>'+
-      '<details><summary>Ver y editar prompt antes de copiar</summary><textarea id="externalPrompt" style="width:100%;min-height:260px">'+esc(result.prompt)+'</textarea></details>'+
-      '<div class="table-wrap" style="max-height:440px;overflow:auto"><table><thead><tr><th>ID de respuesta</th><th>Respuesta original</th><th>Marca o categoría</th></tr></thead><tbody>'+result.rows.map(r=>'<tr><td>'+esc(r.id)+'</td><td style="white-space:pre-wrap">'+esc(r.original)+'</td><td>'+esc(r.segment)+'</td></tr>').join('')+'</tbody></table></div>'+
-      '<details><summary>Tabla completa en formato copiable TSV</summary><textarea id="externalTable" readonly style="width:100%;height:220px;white-space:pre;overflow:auto">'+esc(result.tsv)+'</textarea></details>'+
-      '<label>Pegá aquí las filas en este orden: ID de respuesta → respuesta original → respuesta modificada</label><p class="muted">Son 3 columnas separadas por tabulaciones, como al copiar desde Excel o Google Sheets. No hace falta incluir encabezados; si los incluís, también se reconocen. Podés pegar todas las filas o solamente las que modificaste.</p><textarea id="externalPaste" style="width:100%;height:220px;white-space:pre;overflow:auto" placeholder="40797&#9;SUV.&#9;SUV.\n40802&#9;&#9;Sin información"></textarea>'+
+    const originalTsv=['ID de respuesta\tRespuesta original',...result.rows.map(r=>String(r.id)+'\t'+String(r.original??'').replace(/[\r\n]+/g,' '))].join('\n');
+    $('#externalReview').innerHTML='<div class="card"><h2>Equivalencias manuales por ID: '+esc(q)+'</h2><p>'+result.rows.length+' encuestados de la muestra balanceada. El ID permite aplicar cada corrección a la persona correcta dentro de la base total.</p>'+
+      '<label><b>1. Respuestas para copiar</b> · dos columnas: ID de respuesta y respuesta original</label><textarea id="externalTable" readonly style="width:100%;height:260px;white-space:pre;overflow:auto">'+esc(originalTsv)+'</textarea>'+
+      '<div class="actions"><button id="copyExternalTable" class="secondary">Copiar ID + respuesta</button></div>'+
+      '<label><b>2. Respuestas procesadas manualmente</b> · tres columnas: ID de respuesta, respuesta original y respuesta nueva</label><p class="muted">Pegá desde Excel, Google Sheets, ChatGPT, Claude o Gemini. Podés incluir los encabezados y podés pegar todas las filas o sólo las modificadas.</p><textarea id="externalPaste" style="width:100%;height:260px;white-space:pre;overflow:auto" placeholder="40797&#9;SUV.&#9;SUV.\n40802&#9;Chebroleth&#9;Chevrolet"></textarea>'+
       '<button id="externalPreview" class="secondary">Comparar cambios</button><div id="externalDiff"></div><button id="externalApply" class="primary" disabled>Confirmar y guardar correcciones por ID</button></div>';
     let preview=null,pasted='';
     const copy=async selector=>{const input=$(selector);try{await navigator.clipboard.writeText(input.value);toast('Copiado')}catch{input.focus();input.select();toast('Texto seleccionado: presioná Ctrl+C')}};
     $('#copyExternalTable').onclick=()=>copy('#externalTable');
-    $('#copyExternalPrompt').onclick=()=>copy('#externalPrompt');
     $('#externalPaste').oninput=()=>{preview=null;$('#externalApply').disabled=true};
     $('#externalPreview').onclick=async()=>{try{
       const text=$('#externalPaste').value;
@@ -214,7 +202,9 @@ function syncTextSelection(){
   if(questions.includes(current))$('#textQ').value=current;
   else $('#textQ').value=initialReviewQuestion(questions,S.project.text_classifications);
   $('#processText').disabled=$('#processAllText').disabled=questions.length===0;
-  if(questions.length)loadReview();else $('#review').innerHTML='<div class="alert">Seleccioná al menos una pregunta arriba.</div>';
+  $('#openManual').disabled=questions.length===0;
+  const checks=[...document.querySelectorAll('[data-tselect]')];if($('#selectAllText')){$('#selectAllText').checked=checks.length>0&&checks.every(x=>x.checked);$('#selectAllText').indeterminate=checks.some(x=>x.checked)&&!checks.every(x=>x.checked)}
+  if(!questions.length&&$('#review'))$('#review').innerHTML='<div class="alert">Seleccioná al menos una pregunta arriba.</div>';
 }
 async function saveTextSelection(){
   const data=selectedTextSettings();
@@ -239,7 +229,7 @@ async function previewTextPrompt(){
   }catch(e){toast(e.message,true)}
 }
 function textBusy(busy){
-  ['processText','processAllText','saveTextSelection','batch','geminiModel','geminiMaxTokens'].forEach(id=>{if($('#'+id))$('#'+id).disabled=busy});
+  ['processText','processAllText','openManual','batch','geminiModel','geminiMaxTokens','selectAllText'].forEach(id=>{if($('#'+id))$('#'+id).disabled=busy});
   document.querySelectorAll('[data-tselect],[data-tmode],[data-tcount],[data-tprompt]').forEach(x=>x.disabled=busy);
   if($('#stopText'))$('#stopText').disabled=!busy;
 }
@@ -282,8 +272,8 @@ async function watchTextJob(jobId,pid){
         (job.error?'<div class="alert">'+esc(job.error)+'</div>':'')+
         (job.failed_questions?.length?'<details><summary>'+job.failed_questions.length+' preguntas pendientes por error (ver detalles)</summary>'+job.failed_questions.map(f=>'<h4>'+esc(f.question)+'</h4><pre style="white-space:pre-wrap">'+esc(f.details||f.error)+'</pre>').join('')+'</details>':'')+'</div>';
       if(job.prompt_messages){
-        $('#promptNote').textContent='Última llamada real enviada: '+job.model+'. El avance cuenta resultados guardados, no tokens inferidos.';
-        $('#promptContent').textContent=JSON.stringify({messages:job.prompt_messages,schema:job.prompt_schema,options:job.options},null,2);
+        if($('#promptNote'))$('#promptNote').textContent='Última llamada real enviada: '+job.model+'. El avance cuenta resultados guardados, no tokens inferidos.';
+        if($('#promptContent'))$('#promptContent').textContent=JSON.stringify({messages:job.prompt_messages,schema:job.prompt_schema,options:job.options},null,2);
       }
       if(lastBatch!==job.saved_batches){
         if(lastBatch>=0 && job.saved_batches>lastBatch)toast('Lote '+job.saved_batches+' terminado. Resultados disponibles para revisar.');
