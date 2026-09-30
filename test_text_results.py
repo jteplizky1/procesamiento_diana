@@ -50,6 +50,33 @@ class TextResultsTests(unittest.TestCase):
         self.assertEqual(result['processed'], 1)
         self.assertEqual(result['remaining'], 2)
 
+    def test_workflow_requires_final_approval(self):
+        frame = pd.DataFrame({'Response ID': ['1', '2'], 'Q': ['Uno', 'Dos']})
+        project = {'sample_response_ids': ['1', '2'], 'dictionary': [
+            {'pregunta': 'Q', 'tipo': 'texto libre', 'incluir': True}
+        ], 'selected_text_questions': ['Q'], 'text_classifications': {'Q': {
+            'Uno': {'segment': 'Categoría A', 'approved': False},
+            'Dos': {'segment': 'Categoría B', 'approved': True},
+        }}}
+        status = server.text_workflow_status(frame, project)
+        self.assertTrue(status['processing_complete'])
+        self.assertFalse(status['complete'])
+        self.assertEqual(status['processed'], 2)
+        self.assertEqual(status['approved'], 1)
+
+    def test_id_override_is_the_final_value(self):
+        frame = pd.DataFrame({'Response ID': ['1'], 'Q': ['Original']})
+        project = {'sample_response_ids': ['1'], 'dictionary': [
+            {'pregunta': 'Q', 'tipo': 'texto libre', 'incluir': True}
+        ], 'selected_text_questions': ['Q'], 'text_classifications': {'Q': {
+            'Original': {'segment': 'Propuesta Gemini', 'approved': False}
+        }}, 'text_response_overrides': {'Q': {'1': {
+            'segment': 'Corrección humana', 'approved': True
+        }}}}
+        status = server.text_workflow_status(frame, project)
+        self.assertTrue(status['complete'])
+        self.assertEqual(status['approved'], 1)
+
 
 if __name__ == '__main__':
     unittest.main()

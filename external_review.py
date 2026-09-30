@@ -39,7 +39,8 @@ def sheet_rows(project, frame, question, ids):
     for rid, value in zip(ids, frame[question]):
         original = '' if value is None or bool(pd.isna(value)) else str(value)
         item = overrides.get(rid, mapping.get(original, {}))
-        result.append({'id': rid, 'original': original, 'segment': item.get('segment', '')})
+        result.append({'id': rid, 'original': original, 'segment': item.get('segment', ''),
+                       'approved': bool(item.get('approved')), 'source': item.get('source', '')})
     return result
 
 

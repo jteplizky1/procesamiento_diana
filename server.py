@@ -481,25 +481,36 @@ def text_workflow_status(frame: pd.DataFrame, project: dict) -> dict:
     all_ids = response_ids(frame)
     chosen = set(project.get("sample_response_ids", []))
     ids = [rid for rid in all_ids if rid in chosen]
-    questions = [x["pregunta"] for x in project.get("dictionary", [])
+    available = [x["pregunta"] for x in project.get("dictionary", [])
                  if x.get("incluir") and x.get("tipo") == "texto libre" and x["pregunta"] in sample]
+    selected = project.get("selected_text_questions")
+    questions = [question for question in (selected if selected is not None else available)
+                 if question in available]
     details = []
     for question in questions:
         mapping = project.get("text_classifications", {}).get(question, {})
         overrides = project.get("text_response_overrides", {}).get(question, {})
-        total = complete = 0
+        total = processed = approved = 0
         for rid, raw in zip(ids, sample[question]):
             original = "" if raw is None or bool(pd.isna(raw)) else str(raw)
             if not original.strip():
                 continue
             total += 1
-            segment = overrides.get(rid, mapping.get(original, {})).get("segment", "")
+            item = overrides.get(rid, mapping.get(original, {}))
+            segment = item.get("segment", "")
             if str(segment).strip():
-                complete += 1
-        details.append({"pregunta": question, "total": total, "procesadas": complete,
-                        "pendientes": total - complete, "completa": complete == total})
-    return {"complete": all(x["completa"] for x in details), "questions": details,
-            "total": sum(x["total"] for x in details), "processed": sum(x["procesadas"] for x in details)}
+                processed += 1
+                if item.get("approved"):
+                    approved += 1
+        details.append({"pregunta": question, "total": total, "procesadas": processed,
+                        "aprobadas": approved, "pendientes": total - processed,
+                        "pendientes_revision": total - approved, "procesamiento_completo": processed == total,
+                        "completa": approved == total})
+    return {"complete": all(x["completa"] for x in details),
+            "processing_complete": all(x["procesamiento_completo"] for x in details),
+            "questions": details, "total": sum(x["total"] for x in details),
+            "processed": sum(x["procesadas"] for x in details),
+            "approved": sum(x["aprobadas"] for x in details)}
 
 
 def reconcile_changed_questions(project: dict, new_dictionary: list[dict]) -> list[str]:
@@ -1292,6 +1303,61 @@ class Handler(BaseHTTPRequestHandler):
                     'max_weight': max(weights.values(), default=0)})
             if action == "process-text":
                 return self.send_json(start_text_job(pid, data), 202)
+            if action == "review-text-by-id":
+                with LOCK:
+                    latest = read_project(pid)
+                    question = resolve_column(frame, data["question"])
+                    sample = sample_frame(frame, latest)
+                    sample_ids = [rid for rid in response_ids(frame) if rid in set(latest.get("sample_response_ids", []))]
+                    allowed = {row["id"]: row for row in external_review.sheet_rows(latest, sample, question, sample_ids)}
+                    overrides = latest.setdefault("text_response_overrides", {}).setdefault(question, {})
+                    mode = latest.get("text_question_settings", {}).get(question, {}).get("mode") or latest.get("text_processing_modes", {}).get(question)
+                    known, _ = brand_memory(latest)
+                    saved = 0
+                    for item in data.get("rows", []):
+                        rid = str(item.get("id", ""))
+                        if rid not in allowed:
+                            raise ValueError(f"ID desconocido para esta pregunta: {rid}")
+                        segment = str(item.get("segment", "")).strip()
+                        if allowed[rid]["original"].strip() and not segment:
+                            raise ValueError(f"La respuesta procesada del ID {rid} no puede quedar vacía.")
+                        if mode == "brands" and segment:
+                            segment = normalize_brand(segment, known)
+                            known.extend(segment.split(";"))
+                        overrides[rid] = {"segment": segment, "original": allowed[rid]["original"],
+                                          "approved": bool(item.get("approved", False)), "reviewed": True,
+                                          "source": "inline_manual"}
+                        saved += 1
+                    save_project(latest)
+                return self.send_json({"saved": saved})
+            if action == "finalize-text-review":
+                with LOCK:
+                    latest = read_project(pid)
+                    sample = sample_frame(frame, latest)
+                    sample_ids = [rid for rid in response_ids(frame) if rid in set(latest.get("sample_response_ids", []))]
+                    questions = latest.get("selected_text_questions") or [
+                        row["pregunta"] for row in latest.get("dictionary", [])
+                        if row.get("incluir") and row.get("tipo") == "texto libre"
+                    ]
+                    approved = 0
+                    for requested in questions:
+                        question = resolve_column(sample, requested)
+                        mapping = latest.get("text_classifications", {}).get(question, {})
+                        overrides = latest.setdefault("text_response_overrides", {}).setdefault(question, {})
+                        for rid, raw in zip(sample_ids, sample[question]):
+                            original = "" if raw is None or bool(pd.isna(raw)) else str(raw)
+                            if not original.strip():
+                                continue
+                            current = overrides.get(rid, mapping.get(original, {}))
+                            segment = str(current.get("segment", "")).strip()
+                            if not segment:
+                                raise ValueError(f"Todavía falta procesar el ID {rid} de la pregunta: {question}")
+                            overrides[rid] = {**current, "segment": segment, "original": original,
+                                              "approved": True, "reviewed": True,
+                                              "source": current.get("source") or "gemini_confirmed"}
+                            approved += 1
+                    save_project(latest)
+                return self.send_json({"approved": approved, "questions": len(questions)})
             if action == "review-text":
                 with LOCK:
                     latest = read_project(pid)
