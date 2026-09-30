@@ -142,7 +142,8 @@ function textViewEnhanced(){
   $('#content').innerHTML=`<div class="card"><h2>Preguntas a procesar</h2>
     <p>Marcá las preguntas. La cola completa todos los lotes de una pregunta antes de pasar a la siguiente, en el orden de esta tabla.</p>
     <p class="muted">Instrucciones: escribí tu criterio en lenguaje natural. El sistema lo integra al prompt y agrega el formato JSON. Las correcciones de marcas guardadas sirven de referencia para próximos lotes de este proyecto.</p>
-    <div class="table-wrap"><table><thead><tr><th><label><input type="checkbox" id="selectAllText"> Todas</label></th><th>Pregunta</th><th>Interpretación</th><th>Categorías (vacío = libre)</th><th>Instrucciones para Gemini</th></tr></thead><tbody>
+    <div class="actions"><label class="check" style="background:#e7f6f7;border-color:#87d4d8"><input type="checkbox" id="selectAllText"> <b>Incluir todas las preguntas</b></label><span id="textSelectionCount" class="muted"></span></div>
+    <div class="table-wrap"><table><thead><tr><th>Incluir</th><th>Pregunta</th><th>Interpretación</th><th>Categorías (vacío = libre)</th><th>Instrucciones para Gemini</th></tr></thead><tbody>
     ${all.map((q,i)=>{const cfg=S.project.text_question_settings?.[q]||{mode:S.project.text_processing_modes?.[q]||'semantic',category_count:S.project.text_category_counts?.[q]};
       return `<tr><td><input type="checkbox" data-tselect="${i}" ${chosen.includes(q)?'checked':''}></td><td>${i+1}. ${esc(q)}</td>
       <td><select data-tmode="${i}"><option value="semantic" ${cfg.mode==='semantic'?'selected':''}>Categorías temáticas</option><option value="brands" ${cfg.mode==='brands'?'selected':''}>Normalizar marcas</option></select></td>
@@ -221,6 +222,7 @@ function syncTextSelection(){
   $('#processText').disabled=$('#processAllText').disabled=questions.length===0;
   $('#openManual').disabled=questions.length===0;
   const checks=[...document.querySelectorAll('[data-tselect]')];if($('#selectAllText')){$('#selectAllText').checked=checks.length>0&&checks.every(x=>x.checked);$('#selectAllText').indeterminate=checks.some(x=>x.checked)&&!checks.every(x=>x.checked)}
+  if($('#textSelectionCount'))$('#textSelectionCount').textContent=`${questions.length} de ${checks.length} preguntas incluidas`;
   if(!questions.length&&$('#review'))$('#review').innerHTML='<div class="alert">Seleccioná al menos una pregunta arriba.</div>';
 }
 async function saveTextSelection(){
