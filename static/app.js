@@ -356,11 +356,21 @@ async function watchTextJob(jobId,pid){
         if(job.status==='complete')toast('Procesamiento finalizado; resultados guardados.');
         if(job.status==='error')toast(job.error_details||job.error,true);
         if(job.status==='partial')toast('Finalizó con preguntas pendientes. Los resultados guardados se conservan.\n\n'+job.failed_questions.map(f=>f.question+'\n'+(f.details||f.error)).join('\n\n'),true);
+        if(job.status==='interrupted'){$('#jobProgress').insertAdjacentHTML('beforeend','<div class="alert"><b>El servidor se reinició durante el procesamiento.</b><p>Los lotes terminados siguen guardados. Podés continuar únicamente con las respuestas pendientes.</p><button class="primary" id="resumeInterruptedJob">Continuar procesamiento</button></div>');$('#resumeInterruptedJob').onclick=()=>startTextProcessing(true)}
         await loadReview();S.project=await api('/api/project/'+pid);await refreshWorkflow();shell();return;
       }
       await new Promise(resolve=>setTimeout(resolve,1000));
     }
-  }catch(e){toast('No se pudo consultar el progreso: '+e.message,true);textBusy(false)}
+  }catch(e){
+    textBusy(false);
+    if(e.message.includes('HTTP 404')){
+      try{S.project=await api('/api/project/'+pid);await refreshWorkflow();await loadReview();shell()}catch{}
+      if($('#jobProgress'))$('#jobProgress').innerHTML='<div class="alert"><b>La instancia perdió el seguimiento de la tarea.</b><p>Los lotes ya terminados se conservaron. Reanudá para procesar solamente los pendientes.</p><button class="primary" id="resumeMissingJob">Reanudar procesamiento</button></div>';
+      if($('#resumeMissingJob'))$('#resumeMissingJob').onclick=()=>startTextProcessing(true);
+      return;
+    }
+    toast('No se pudo consultar el progreso: '+e.message,true)
+  }
 }
 
 function reviewSlice(rows,state){

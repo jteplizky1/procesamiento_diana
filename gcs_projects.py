@@ -63,6 +63,26 @@ def download(name: str) -> bytes:
     return response.content
 
 
+def save_job(job: dict) -> None:
+    """Persist progress so polling works across instances and cold starts."""
+    job_id = str(job.get("id", ""))
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", job_id):
+        raise ValueError("ID de tarea inválido.")
+    upload(f"jobs/{job_id}.json", json.dumps(job, ensure_ascii=False).encode("utf-8"),
+           "application/json; charset=utf-8")
+
+
+def load_job(job_id: str) -> dict | None:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", str(job_id or "")):
+        return None
+    try:
+        return json.loads(download(f"jobs/{job_id}.json").decode("utf-8"))
+    except ValueError as error:
+        if "HTTP 404" in str(error):
+            return None
+        raise
+
+
 def list_cloud_projects() -> list[dict]:
     url = (f"https://storage.googleapis.com/storage/v1/b/{urllib.parse.quote(bucket_name(), safe='')}/o"
            "?prefix=projects%2F")

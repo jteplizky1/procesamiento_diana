@@ -8,6 +8,20 @@ import gcs_projects
 
 
 class GcsProjectsTests(unittest.TestCase):
+    def test_job_progress_is_stored_as_json(self):
+        job = {'id': 'job123', 'project_id': 'project1', 'status': 'running', 'percent': 25}
+        with patch.object(gcs_projects, 'upload') as upload:
+            gcs_projects.save_job(job)
+        name, payload, content_type = upload.call_args.args
+        self.assertEqual(name, 'jobs/job123.json')
+        self.assertEqual(json.loads(payload), job)
+        self.assertEqual(content_type, 'application/json; charset=utf-8')
+
+    def test_job_progress_can_be_loaded(self):
+        with patch.object(gcs_projects, 'download', return_value=b'{"id":"job123","status":"complete"}'):
+            job = gcs_projects.load_job('job123')
+        self.assertEqual(job['status'], 'complete')
+
     def test_prefix_uses_safe_name_and_id(self):
         self.assertEqual(
             gcs_projects.project_prefix({"id": "abc123", "name": "Encuesta Región Ñ"}),

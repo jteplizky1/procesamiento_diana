@@ -7,6 +7,7 @@ venv/
 !.env.example
 projects/
 snapshots/
+jobs/
 survey_projects/
 exports/
 *.xlsx

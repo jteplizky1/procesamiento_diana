@@ -44,8 +44,10 @@ APP_DIR = Path(__file__).resolve().parent
 V1_PROJECTS = APP_DIR.parent / "survey_explorer" / "survey_projects"
 PROJECTS_DIR = APP_DIR / "projects"
 SNAPSHOTS_DIR = APP_DIR / "snapshots"
+JOBS_DIR = APP_DIR / "jobs"
 PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
 SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+JOBS_DIR.mkdir(parents=True, exist_ok=True)
 STATIC_DIR = APP_DIR / "static"
 DATA_CACHE: dict[str, pd.DataFrame] = {}
 TEXT_JOBS: dict[str, dict] = {}
@@ -55,6 +57,7 @@ CLOUD_SYNC_LOCK = threading.RLock()
 CLOUD_SYNC_TIMERS: dict[str, threading.Timer] = {}
 CLOUD_SYNC_STATUS: dict[str, dict] = {}
 CLOUD_HYDRATION = {"attempted_at": 0.0, "complete": False, "error": ""}
+JOB_SYNC_TIMERS: dict[str, threading.Timer] = {}
 
 QUESTION_TYPES = [
     "selección única", "selección múltiple", "escala", "matriz de escala",
@@ -77,6 +80,67 @@ def clean_json(value: Any) -> Any:
 
 def project_path(project_id: str) -> Path:
     return PROJECTS_DIR / f"{project_id}.json"
+
+
+def job_path(job_id: str) -> Path:
+    return JOBS_DIR / f"{job_id}.json"
+
+
+def _write_job(job: dict) -> None:
+    job["updated_at"] = time.time()
+    destination = job_path(job["id"])
+    temporary = destination.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(clean_json(job), ensure_ascii=False), encoding="utf-8")
+    os.replace(temporary, destination)
+
+
+def _upload_job(job_id: str) -> None:
+    try:
+        path = job_path(job_id)
+        if path.exists():
+            gcs_projects.save_job(json.loads(path.read_text(encoding="utf-8")))
+    finally:
+        with CLOUD_SYNC_LOCK:
+            JOB_SYNC_TIMERS.pop(job_id, None)
+
+
+def persist_job(job: dict, *, immediate_cloud: bool = False) -> None:
+    """Store progress locally and in GCS so another instance can answer polling."""
+    _write_job(job)
+    if immediate_cloud:
+        gcs_projects.save_job(clean_json(job))
+        return
+    with CLOUD_SYNC_LOCK:
+        previous = JOB_SYNC_TIMERS.pop(job["id"], None)
+        if previous:
+            previous.cancel()
+        timer = threading.Timer(.35, _upload_job, args=(job["id"],))
+        timer.daemon = True
+        JOB_SYNC_TIMERS[job["id"]] = timer
+        timer.start()
+
+
+def read_job(job_id: str) -> dict | None:
+    if job_id in TEXT_JOBS:
+        return TEXT_JOBS[job_id]
+    path = job_path(job_id)
+    if path.exists():
+        local = json.loads(path.read_text(encoding="utf-8"))
+        if local.get("status") != "running":
+            return local
+        # This replica is only observing the worker. Refresh its moving state from GCS.
+        try:
+            remote = gcs_projects.load_job(job_id)
+        except Exception:
+            return local
+        if remote:
+            path.write_text(json.dumps(remote, ensure_ascii=False), encoding="utf-8")
+            return remote
+        return local
+    job = gcs_projects.load_job(job_id)
+    if job:
+        path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+    return job
 
 
 def delete_project(project_id: str) -> dict:
@@ -736,6 +800,13 @@ def start_text_job(project_id: str, data: dict) -> dict:
                "phase": "Preparando cola", "questions": questions, "started_at": time.time(),
                "completed": 0, "total": 0, "remaining": 0, "saved_batches": 0, "batches": [], "stop_requested": False}
         TEXT_JOBS[job_id] = job
+        project["last_text_job_id"] = job_id
+        save_project(project)
+        try:
+            persist_job(job, immediate_cloud=True)
+        except Exception as error:
+            job["persistence_warning"] = str(error)
+            persist_job(job)
 
     def update(_percent, phase, **extra):
         with LOCK:
@@ -743,10 +814,12 @@ def start_text_job(project_id: str, data: dict) -> dict:
             if "completed" in extra:
                 job["question_completed"] = extra["completed"]
                 job["question_total"] = extra["total"]
+            persist_job(job)
 
     def activity(**extra):
         with LOCK:
             job.update(extra)
+            persist_job(job)
 
     def worker():
         OLLAMA_ACTIVITY.callback = activity
@@ -787,6 +860,7 @@ def start_text_job(project_id: str, data: dict) -> dict:
                             job["saved_batches"] += 1
                             job["batches"].append({"number": job["saved_batches"], "question": question,
                                                   "processed": result["processed"], "finished_at": time.time()})
+                            persist_job(job)
                     recount()
                     if not data.get("all_batches", True) or result["remaining"] == 0:
                         break
@@ -799,6 +873,7 @@ def start_text_job(project_id: str, data: dict) -> dict:
             activity(status="error", phase="Cola detenida por error", error=str(error), error_details=traceback.format_exc())
         finally:
             OLLAMA_ACTIVITY.callback = lambda **kw: None
+            persist_job(job)
 
     threading.Thread(target=worker, daemon=True, name=f"text-job-{job_id[:8]}").start()
     return dict(job)
@@ -1173,11 +1248,24 @@ class Handler(BaseHTTPRequestHandler):
             path, _, query = self.path.partition("?")
             if path.startswith("/api/job/"):
                 job_id = path.rsplit("/", 1)[-1]
-                if job_id not in TEXT_JOBS:
+                job = read_job(job_id)
+                if not job:
                     return self.send_json({"error": "Tarea inexistente"}, 404)
-                return self.send_json(TEXT_JOBS[job_id])
+                if job.get("status") == "running" and time.time() - float(job.get("updated_at", 0)) > 180:
+                    job.update({"status": "interrupted", "phase": "La instancia se reinició; los lotes ya guardados se conservan",
+                                "error": "La ejecución se interrumpió por reinicio del servidor. Volvé a procesar para continuar desde los pendientes."})
+                return self.send_json(job)
             if path == "/api/text-jobs":
-                return self.send_json([dict(j) for j in TEXT_JOBS.values()])
+                jobs = {job_id: dict(job) for job_id, job in TEXT_JOBS.items()}
+                for summary in list_projects():
+                    try:
+                        project = read_project(summary["id"]); job_id = project.get("last_text_job_id")
+                        if job_id and job_id not in jobs:
+                            job = read_job(job_id)
+                            if job: jobs[job_id] = job
+                    except Exception:
+                        continue
+                return self.send_json(list(jobs.values()))
             if path == "/api/projects":
                 hydrate_cloud_projects()
                 return self.send_json(list_projects())
