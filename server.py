@@ -51,6 +51,10 @@ DATA_CACHE: dict[str, pd.DataFrame] = {}
 TEXT_JOBS: dict[str, dict] = {}
 OLLAMA_ACTIVITY = threading.local()
 LOCK = threading.RLock()
+CLOUD_SYNC_LOCK = threading.RLock()
+CLOUD_SYNC_TIMERS: dict[str, threading.Timer] = {}
+CLOUD_SYNC_STATUS: dict[str, dict] = {}
+CLOUD_HYDRATION = {"attempted_at": 0.0, "complete": False, "error": ""}
 
 QUESTION_TYPES = [
     "selección única", "selección múltiple", "escala", "matriz de escala",
@@ -109,11 +113,70 @@ def read_project(project_id: str) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def save_project(project: dict) -> None:
+def _upload_project_checkpoint(project_id: str) -> None:
+    """Upload the latest durable project state without blocking an HTTP request."""
+    try:
+        latest = read_project(project_id)
+        result = gcs_projects.save_bundle(
+            latest, project_path(project_id), SNAPSHOTS_DIR / f"{project_id}.jsonl", None
+        )
+        CLOUD_SYNC_STATUS[project_id] = {
+            "ok": True, "saved_at": datetime.now().isoformat(timespec="seconds"), **result
+        }
+    except Exception as error:
+        CLOUD_SYNC_STATUS[project_id] = {
+            "ok": False, "error": str(error),
+            "attempted_at": datetime.now().isoformat(timespec="seconds"),
+        }
+    finally:
+        with CLOUD_SYNC_LOCK:
+            CLOUD_SYNC_TIMERS.pop(project_id, None)
+
+
+def schedule_cloud_checkpoint(project_id: str, delay: float = 1.0) -> None:
+    """Debounce rapid edits and persist the newest version using the app identity."""
+    if os.getenv("DIANA_AUTO_CLOUD", "1").strip().lower() in {"0", "false", "no"}:
+        return
+    with CLOUD_SYNC_LOCK:
+        previous = CLOUD_SYNC_TIMERS.pop(project_id, None)
+        if previous:
+            previous.cancel()
+        timer = threading.Timer(delay, _upload_project_checkpoint, args=(project_id,))
+        timer.daemon = True
+        CLOUD_SYNC_TIMERS[project_id] = timer
+        timer.start()
+
+
+def hydrate_cloud_projects(force: bool = False) -> dict:
+    """Recover cloud projects after a cold start of an ephemeral server."""
+    now = time.time()
+    if not force and (CLOUD_HYDRATION["complete"] or now - CLOUD_HYDRATION["attempted_at"] < 60):
+        return dict(CLOUD_HYDRATION)
+    CLOUD_HYDRATION["attempted_at"] = now
+    try:
+        restored = 0
+        for remote in gcs_projects.list_cloud_projects():
+            if not project_path(remote["id"]).exists():
+                gcs_projects.restore(remote["prefix"], PROJECTS_DIR, SNAPSHOTS_DIR)
+                restored += 1
+            CLOUD_SYNC_STATUS.setdefault(remote["id"], {
+                "ok": True, "saved_at": remote.get("updated_at", ""),
+                "bucket": f"gs://{gcs_projects.bucket_name()}", "prefix": remote["prefix"],
+                "restored": True,
+            })
+        CLOUD_HYDRATION.update({"complete": True, "error": "", "restored": restored})
+    except Exception as error:
+        CLOUD_HYDRATION.update({"complete": False, "error": str(error), "restored": 0})
+    return dict(CLOUD_HYDRATION)
+
+
+def save_project(project: dict, *, cloud: bool = True) -> None:
     project["updated_at"] = datetime.now().isoformat(timespec="seconds")
     project_path(project["id"]).write_text(
         json.dumps(clean_json(project), ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    if cloud:
+        schedule_cloud_checkpoint(project["id"])
 
 
 def list_projects() -> list[dict]:
@@ -1115,11 +1178,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(TEXT_JOBS[job_id])
             if path == "/api/text-jobs":
                 return self.send_json([dict(j) for j in TEXT_JOBS.values()])
-            if path == "/api/projects": return self.send_json(list_projects())
+            if path == "/api/projects":
+                hydrate_cloud_projects()
+                return self.send_json(list_projects())
             if path == "/api/cloud-projects": return self.send_json(gcs_projects.list_cloud_projects())
             if path.startswith("/api/project/"):
                 parts = path.split("/"); pid = parts[3]; project = read_project(pid)
                 if len(parts) == 4: return self.send_json(project)
+                if parts[4] == "cloud-status":
+                    return self.send_json(CLOUD_SYNC_STATUS.get(pid, {
+                        "ok": None, "pending": pid in CLOUD_SYNC_TIMERS,
+                        "message": "El primer checkpoint todavía está pendiente."
+                    }))
                 if parts[4] == "text-review":
                     question = urllib.parse.parse_qs(query).get("question", [""])[0]
                     mapping = project.get("text_classifications", {}).get(question, {})
@@ -1256,9 +1326,13 @@ class Handler(BaseHTTPRequestHandler):
                 workbook = None
                 if project.get("sample_response_ids"):
                     workbook = export_workbook(project, load_source(project))
-                return self.send_json(gcs_projects.save_bundle(
+                result = gcs_projects.save_bundle(
                     project, project_path(pid), SNAPSHOTS_DIR / f"{pid}.jsonl", workbook
-                ))
+                )
+                CLOUD_SYNC_STATUS[pid] = {
+                    "ok": True, "saved_at": datetime.now().isoformat(timespec="seconds"), **result
+                }
+                return self.send_json(result)
             frame = load_source(project, refresh=action == "refresh-source")
             if action == "sync-storage":
                 raw_rows, processed_rows, result_rows = storage_rows(project, frame)

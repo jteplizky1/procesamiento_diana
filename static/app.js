@@ -28,10 +28,26 @@ function toast(msg,bad=false){
 }
 window.addEventListener('unhandledrejection',event=>{event.preventDefault();showPersistentError(event.reason?.stack||event.reason?.message||event.reason)});
 window.addEventListener('error',event=>showPersistentError(event.error?.stack||event.message));
-function markSaving(on){$('#saveState').textContent=on?'Cambios sin guardar':'Todo guardado';$('#saveState').style.color=on?'#b7791f':'#25855a'}
+let cloudStatusToken=0;
+async function refreshCloudStatus(attempt=0,token=cloudStatusToken){
+ if(!S.project?.id||token!==cloudStatusToken)return;
+ try{
+  const status=await api('/api/project/'+S.project.id+'/cloud-status');
+  if(token!==cloudStatusToken)return;
+  if(status.ok){$('#saveState').textContent='Guardado local y en sandbox';$('#saveState').style.color='#25855a';$('#saveState').title='Última copia: '+(status.saved_at||'recién')}
+  else if(status.pending&&attempt<8){$('#saveState').textContent='Guardado local · sincronizando sandbox…';setTimeout(()=>refreshCloudStatus(attempt+1,token),1500)}
+  else{$('#saveState').textContent='Guardado local · sandbox pendiente';$('#saveState').style.color='#b7791f';$('#saveState').title=status.error||status.message||'La copia remota todavía no se confirmó.'}
+ }catch(e){$('#saveState').textContent='Guardado local · no se pudo verificar sandbox';$('#saveState').style.color='#b7791f';$('#saveState').title=e.message}
+}
+function markSaving(on){
+ cloudStatusToken++;
+ $('#saveState').textContent=on?'Cambios sin guardar':'Guardado local · sincronizando sandbox…';
+ $('#saveState').style.color=on?'#b7791f':'#25855a';
+ if(!on){const token=cloudStatusToken;setTimeout(()=>refreshCloudStatus(0,token),1200)}
+}
 async function init(){S.projects=await api('/api/projects');renderProjectSelect();if(S.projects.length)await openProject(S.projects[0].id);else render();}
 function renderProjectSelect(){let el=$('#projectSelect');el.innerHTML=S.projects.length?S.projects.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join(''):'<option>Sin proyectos</option>';if(S.project)el.value=S.project.id;if($('#deleteProject'))$('#deleteProject').disabled=!S.project}
-async function openProject(id){S.project=await api('/api/project/'+id);S.source=null;S.workflow=null;S.sheetTabs=null;S.quotaDraft=structuredClone(S.project.quota_rows||[]);S.quotaDirty=false;renderProjectSelect();render();if(S.project.source_url){try{S.source=await api(`/api/project/${id}/source`);S.workflow=await api(`/api/project/${id}/workflow-status`);render()}catch(e){toast(e.message,true)}}}
+async function openProject(id){S.project=await api('/api/project/'+id);S.source=null;S.workflow=null;S.sheetTabs=null;S.quotaDraft=structuredClone(S.project.quota_rows||[]);S.quotaDirty=false;renderProjectSelect();render();markSaving(false);if(S.project.source_url){try{S.source=await api(`/api/project/${id}/source`);S.workflow=await api(`/api/project/${id}/workflow-status`);render();markSaving(false)}catch(e){toast(e.message,true)}}}
 $('#projectSelect').onchange=e=>openProject(e.target.value);
 async function cloudCheckpoint(reason='avance',silent=false){
  if(!S.project?.id)return false;
