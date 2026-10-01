@@ -684,9 +684,9 @@ def process_text(
     codebooks = project.setdefault("text_codebooks", {})
     instructions = project.get("text_question_settings", {}).get(question, {}).get("instructions", "")
     known, examples = brand_memory(project) if mode == "brands" else ([], {})
-    key = codebook_key(question, category_count)
+    key = codebook_key(question, category_count, mode)
     if mode != "brands" and key not in codebooks:
-        request = category_request(question, values.tolist(), category_count, instructions, RETRY_ATTEMPT.get())
+        request = category_request(question, values.tolist(), category_count, instructions, RETRY_ATTEMPT.get(), mode)
         OLLAMA_ACTIVITY.stage = 'Creación de categorías'
         progress(0, f"Creando categorías (muestra de {request['sample_count']} textos completos)", completed=already_done, total=total_unique, remaining=len(pending))
         result = ai_request(project, request["messages"], request["schema"])
@@ -758,7 +758,7 @@ def text_selection(project, data):
         mode = cfg.get("mode", "semantic")
         count = cfg.get("category_count")
         count = int(count) if count not in (None, "", 0, "0") else None
-        if mode not in ("semantic", "brands") or (count is not None and count < 2):
+        if mode not in ("semantic", "semantic_stance", "brands") or (count is not None and count < 2):
             raise ValueError("Revisá el modo y la cantidad de categorías.")
         settings[question] = {"mode": mode, "category_count": count, "instructions": str(cfg.get("instructions", "")).strip()}
     return questions, settings
@@ -774,10 +774,10 @@ def text_prompt_preview(project, frame, data):
     batch = [v for v in values.unique() if v not in mapping][:int(data.get("batch_size", 10))]
     if not batch:
         return {"version": PROMPT_VERSION, "requests": [], "note": "No quedan textos pendientes."}
-    key = codebook_key(question, cfg["category_count"])
+    key = codebook_key(question, cfg["category_count"], cfg["mode"])
     categories = project.get("text_codebooks", {}).get(key)
     if cfg["mode"] != "brands" and not categories:
-        requests = [category_request(question, values.tolist(), cfg["category_count"], cfg["instructions"])]
+        requests = [category_request(question, values.tolist(), cfg["category_count"], cfg["instructions"], mode=cfg["mode"])]
         note = "Esta es la próxima llamada exacta. El prompt de clasificación se construirá con el catálogo devuelto."
     else:
         known, examples = brand_memory(project) if cfg["mode"] == "brands" else ([], {})
@@ -823,6 +823,23 @@ def start_text_job(project_id: str, data: dict) -> dict:
 
     def worker():
         OLLAMA_ACTIVITY.callback = activity
+        last_remote_stop_check = [0.0]
+        def should_stop():
+            if job.get("stop_requested"):
+                return True
+            now = time.time()
+            if now - last_remote_stop_check[0] < 2:
+                return False
+            last_remote_stop_check[0] = now
+            try:
+                remote = gcs_projects.load_job(job_id)
+                if remote and remote.get("stop_requested"):
+                    job["stop_requested"] = True
+                    persist_job(job)
+                    return True
+            except Exception:
+                pass
+            return False
         try:
             frame = load_source(read_project(project_id))
             base = sample_frame(frame, read_project(project_id))
@@ -838,14 +855,14 @@ def start_text_job(project_id: str, data: dict) -> dict:
             for index, question in enumerate(questions, 1):
                 activity(question=question, question_index=index, question_count=len(questions))
                 while True:
-                    if job["stop_requested"]:
+                    if should_stop():
                         activity(status="stopped", phase="Cola detenida; resultados guardados")
                         return
                     try:
                         result = run_with_retries(
                             lambda size: process_text(read_project(project_id), frame, question, size,
                                 settings[question]["mode"], settings[question]["category_count"], update),
-                            batch_size, activity, lambda: job["stop_requested"])
+                            batch_size, activity, should_stop)
                     except StopRequested:
                         activity(status="stopped", phase="Cola detenida; resultados guardados")
                         return
@@ -1405,11 +1422,21 @@ class Handler(BaseHTTPRequestHandler):
                 save_project(project)
                 return self.send_json({"saved": True})
             if action == "stop-text":
+                targets = []
                 with LOCK:
                     for job in TEXT_JOBS.values():
-                        if job["project_id"] == pid and job["status"] == "running":
+                        if job["project_id"] == pid and job["status"] == "running" and (not data.get("job_id") or data["job_id"] == job["id"]):
                             job["stop_requested"] = True
-                return self.send_json({"message": "Se detendrá después de la llamada actual."})
+                            targets.append(job)
+                if not targets:
+                    job_id = data.get("job_id") or project.get("last_text_job_id")
+                    job = read_job(job_id) if job_id else None
+                    if job and job.get("project_id") == pid and job.get("status") == "running":
+                        job["stop_requested"] = True;targets.append(job)
+                for job in targets:
+                    persist_job(job, immediate_cloud=True)
+                stopped = [job["id"] for job in targets]
+                return self.send_json({"message": "Detención solicitada. Se detendrá después de la llamada actual y conservará los lotes guardados.", "jobs": stopped})
             if action == "save-cloud":
                 workbook = None
                 if project.get("sample_response_ids"):

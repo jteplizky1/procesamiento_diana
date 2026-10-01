@@ -85,6 +85,24 @@ class QueueTests(unittest.TestCase):
         self.assertLessEqual(sum(map(len, selected)), 14000)
         self.assertTrue(all(v in answers for v in selected))
 
+    def test_stance_template_requires_standard_prefixes(self):
+        catalog = category_request('¿Lo compraría?', ['Sí, porque es económico'], mode='semantic_stance')
+        self.assertIn('"Si,"', catalog['messages'][0]['content'])
+        request = classification_request('¿Lo compraría?', ['tal vez si baja de precio'], 'semantic_stance',
+                                         ['Depende, precio'])
+        prompt = request['messages'][0]['content']
+        self.assertIn('"Si,"', prompt)
+        self.assertIn('"No,"', prompt)
+        self.assertIn('"Depende,"', prompt)
+
+    def test_text_selection_accepts_three_standard_templates(self):
+        for mode in ('brands', 'semantic', 'semantic_stance'):
+            questions, settings = server.text_selection(self.project, {
+                'questions': ['Q1'], 'settings': {'Q1': {'mode': mode}}
+            })
+            self.assertEqual(questions, ['Q1'])
+            self.assertEqual(settings['Q1']['mode'], mode)
+
     def test_brand_preview_skips_catalog(self):
         self.project['text_classifications'] = {}
         with patch.object(server, 'sample_frame', return_value=self.frame):

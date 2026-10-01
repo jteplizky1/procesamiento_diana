@@ -192,19 +192,19 @@ function textViewEnhanced(){
   S.textCandidates=all;
   $('#content').innerHTML=`<div class="card"><h2>Preguntas a procesar</h2>
     <p>Marcá las preguntas. La cola completa todos los lotes de una pregunta antes de pasar a la siguiente, en el orden de esta tabla.</p>
-    <p class="muted">Instrucciones: escribí tu criterio en lenguaje natural. El sistema lo integra al prompt y agrega el formato JSON. Las correcciones de marcas guardadas sirven de referencia para próximos lotes de este proyecto.</p>
+    <p class="muted">Elegí una plantilla estándar por pregunta. Las aclaraciones adicionales son opcionales y las correcciones de marcas guardadas sirven de referencia para próximos lotes.</p>
     <div class="actions"><label class="check" style="background:#e7f6f7;border-color:#87d4d8"><input type="checkbox" id="selectAllText"> <b>Incluir todas las preguntas</b></label><span id="textSelectionCount" class="muted"></span></div>
-    <div class="table-wrap"><table><thead><tr><th>Incluir</th><th>Pregunta</th><th>Interpretación</th><th>Categorías (vacío = libre)</th><th>Instrucciones para Gemini</th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>Incluir</th><th>Pregunta</th><th>Plantilla estándar</th><th>Categorías (vacío = libre)</th><th>Aclaración opcional</th></tr></thead><tbody>
     ${all.map((q,i)=>{const cfg=S.project.text_question_settings?.[q]||{mode:S.project.text_processing_modes?.[q]||'semantic',category_count:S.project.text_category_counts?.[q]};
       return `<tr><td><input type="checkbox" data-tselect="${i}" ${chosen.includes(q)?'checked':''}></td><td>${i+1}. ${esc(q)}</td>
-      <td><select data-tmode="${i}"><option value="semantic" ${cfg.mode==='semantic'?'selected':''}>Categorías temáticas</option><option value="brands" ${cfg.mode==='brands'?'selected':''}>Normalizar marcas</option></select></td>
-      <td><input type="number" min="2" data-tcount="${i}" value="${esc(cfg.category_count||'')}" placeholder="Libre"></td><td><textarea data-tprompt="${i}" placeholder="Ej.: Devolver solo marcas de autos, nunca modelos.">${esc(cfg.instructions||'')}</textarea></td></tr>`}).join('')}</tbody></table></div></div>
+      <td><select data-tmode="${i}"><option value="brands" ${cfg.mode==='brands'?'selected':''}>a. Unificar marcas</option><option value="semantic" ${cfg.mode==='semantic'?'selected':''}>b. Agrupar motivos</option><option value="semantic_stance" ${cfg.mode==='semantic_stance'?'selected':''}>c. Agrupar motivos + Si/No/Depende</option></select></td>
+      <td><input type="number" min="2" data-tcount="${i}" value="${esc(cfg.category_count||'')}" placeholder="Libre"></td><td><textarea data-tprompt="${i}" placeholder="Opcional: contexto específico de esta pregunta">${esc(cfg.instructions||'')}</textarea></td></tr>`}).join('')}</tbody></table></div></div>
     <div class="card"><h2>Procesamiento y resultados</h2><div class="field"><label>Pregunta para ver resultados o procesar un lote</label><select id="textQ"></select></div>
     <div class="grid three"><div class="field"><label>Tamaño del lote</label><input id="batch" type="number" value="10" min="1" max="100"></div>
     <div class="field"><label>Modelo Gemini</label><input id="geminiModel" value="${esc(S.project.ai?.model||'gemini-2.5-flash')}"></div>
     <div class="field"><label>Máximo de tokens de salida</label><input id="geminiMaxTokens" type="number" min="1024" max="65536" value="${esc(S.project.ai?.max_output_tokens||8192)}"></div></div>
     <p class="muted">Un solo clic procesa todos los pendientes en lotes automáticos, sin pedir confirmación entre lotes. Podés revisar y guardar correcciones mientras continúa. Mantené el servidor encendido.</p>
-    <div class="actions"><button id="processText" class="primary">Procesar pregunta seleccionada</button><button id="processAllText" class="primary">Procesar todas las preguntas</button><button id="openManual" class="secondary">Ingresar manualmente las equivalencias</button></div>
+    <div class="actions"><button id="processText" class="primary">Procesar pregunta seleccionada</button><button id="processAllText" class="primary">Procesar todas las preguntas</button><button id="openManual" class="secondary">Ingresar manualmente las equivalencias</button><button id="stopText" class="secondary" hidden>■ Detener procesamiento</button></div>
     <div id="connectionResult"></div><div id="jobProgress" aria-live="polite"></div><div id="batchHistory"></div>
     <div id="review"></div><div id="manualWorkspace" hidden><div id="externalReview"></div></div></div>`;
   document.querySelectorAll('[data-tselect]').forEach(x=>x.onchange=syncTextSelection);
@@ -212,6 +212,7 @@ function textViewEnhanced(){
   $('#textQ').onchange=async()=>{await loadReview();if(!$('#manualWorkspace').hidden)await openExternalReview()};
   $('#processText').onclick=()=>startTextProcessing(false);
   $('#processAllText').onclick=()=>startTextProcessing(true);
+  $('#stopText').onclick=stopTextProcessing;
   $('#openManual').onclick=async()=>{try{await saveTextSelection();$('#manualWorkspace').hidden=false;await openExternalReview();await loadReview();$('#manualWorkspace').scrollIntoView({behavior:'smooth',block:'start'})}catch(e){toast(e.message,true)}};
   syncTextSelection();
   resumeTextJob();
@@ -302,7 +303,12 @@ async function previewTextPrompt(){
 function textBusy(busy){
   ['processText','processAllText','openManual','batch','geminiModel','geminiMaxTokens','selectAllText'].forEach(id=>{if($('#'+id))$('#'+id).disabled=busy});
   document.querySelectorAll('[data-tselect],[data-tmode],[data-tcount],[data-tprompt]').forEach(x=>x.disabled=busy);
-  if($('#stopText'))$('#stopText').disabled=!busy;
+  if($('#stopText')){$('#stopText').disabled=!busy;$('#stopText').hidden=!busy}
+}
+async function stopTextProcessing(){
+ const button=$('#stopText');button.disabled=true;button.textContent='Deteniendo…';
+ try{const result=await api('/api/project/'+S.project.id+'/stop-text',{method:'POST',body:JSON.stringify({job_id:S.activeTextJobId||null})});toast(result.message);if($('#jobProgress'))$('#jobProgress').insertAdjacentHTML('beforeend','<div class="alert">Detención solicitada. Se conservará el lote que ya haya terminado; la llamada actual puede tardar en finalizar.</div>')}
+ catch(e){toast(e.message,true);button.disabled=false;button.textContent='■ Detener procesamiento'}
 }
 async function startTextProcessing(all){
   if(S.textStarting)return;
@@ -328,7 +334,7 @@ async function resumeTextJob(){
   }catch(e){toast(e.message,true)}
 }
 async function watchTextJob(jobId,pid){
-  const token={};S.textPollToken=token;let lastBatch=-1;
+  const token={};S.textPollToken=token;S.activeTextJobId=jobId;let lastBatch=-1;
   try{
     while(S.textPollToken===token){
       const job=await api('/api/job/'+jobId);
@@ -354,15 +360,16 @@ async function watchTextJob(jobId,pid){
       }
       if(job.status!=='running'){
         if(job.status==='complete')toast('Procesamiento finalizado; resultados guardados.');
+        if(job.status==='stopped')toast('Procesamiento detenido. Los lotes terminados quedaron guardados.');
         if(job.status==='error')toast(job.error_details||job.error,true);
         if(job.status==='partial')toast('Finalizó con preguntas pendientes. Los resultados guardados se conservan.\n\n'+job.failed_questions.map(f=>f.question+'\n'+(f.details||f.error)).join('\n\n'),true);
         if(job.status==='interrupted'){$('#jobProgress').insertAdjacentHTML('beforeend','<div class="alert"><b>El servidor se reinició durante el procesamiento.</b><p>Los lotes terminados siguen guardados. Podés continuar únicamente con las respuestas pendientes.</p><button class="primary" id="resumeInterruptedJob">Continuar procesamiento</button></div>');$('#resumeInterruptedJob').onclick=()=>startTextProcessing(true)}
-        await loadReview();S.project=await api('/api/project/'+pid);await refreshWorkflow();shell();return;
+        S.activeTextJobId=null;await loadReview();S.project=await api('/api/project/'+pid);await refreshWorkflow();shell();return;
       }
       await new Promise(resolve=>setTimeout(resolve,1000));
     }
   }catch(e){
-    textBusy(false);
+    S.activeTextJobId=null;textBusy(false);
     if(e.message.includes('HTTP 404')){
       try{S.project=await api('/api/project/'+pid);await refreshWorkflow();await loadReview();shell()}catch{}
       if($('#jobProgress'))$('#jobProgress').innerHTML='<div class="alert"><b>La instancia perdió el seguimiento de la tarea.</b><p>Los lotes ya terminados se conservaron. Reanudá para procesar solamente los pendientes.</p><button class="primary" id="resumeMissingJob">Reanudar procesamiento</button></div>';
